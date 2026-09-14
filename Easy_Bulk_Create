@@ -1,5 +1,7 @@
 #Created by Melanie Del Pozo
-#Version date: 2026-08-21
+#Version date 2026-08-21
+#This tool facilitates the cross walk between a feature and the bulk create format. It creates 3 outputs: sf_point (or sf_line/sf_poly), tbl_sf_visits and tbl_sf_references. It can be used in conjunction with the Pennsylvania’s Bulk Load Prep Toolbox.
+
 
 # -*- coding: utf-8 -*-
 
