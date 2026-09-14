@@ -1,0 +1,419 @@
+#Created by Melanie Del Pozo
+#Version date 2026-08-13
+#This tool facilitates the cross walk between a point feature and the bulk create format. It creates 3 outputs: sf_point, tbl_sf_visits and tbl_sf_references. It can be used in conjunction with the Pennsylvania’s Bulk Load Prep Toolbox. 
+#It assumes certain it assumes sf type as estimated points, among other things that should make it a ncie short cut to our general tool to use for iNaturalist entries.
+
+
+# -*- coding: utf-8 -*-
+import arcpy
+import os
+from datetime import date
+
+class Toolbox:
+    def __init__(self):
+        self.label = "Source Feature Modifier"
+        self.alias = "source_modifier"
+        self.tools = [Tool]
+
+class Tool:
+    def __init__(self):
+        self.label = "Create sf_point from Feature"
+        self.description = (
+            "Creates sf_point from source, ensures DESCRIPTOR only comes from its own field, "
+            "ensures DIG_COM cannot overwrite DESCRIPTOR, and populates iNat custom fields."
+        )
+
+    def getParameterInfo(self):
+
+        in_fc = arcpy.Parameter(
+            displayName="Input Point Feature Class",
+            name="in_fc",
+            datatype="Feature Class",
+            parameterType="Required",
+            direction="Input"
+        )
+
+        map_by_input = arcpy.Parameter(
+            displayName="MAP_BY (Required Custom Text, max 20 chars)",
+            name="map_by_input",
+            datatype="String",
+            parameterType="Required",
+            direction="Input"
+        )
+
+        # Optional text source fields
+        map_com_field = arcpy.Parameter(
+            displayName="MAP_COM Source Field (optional)",
+            name="map_com_field",
+            datatype="Field",
+            parameterType="Optional",
+            direction="Input"
+        ); map_com_field.parameterDependencies = ["in_fc"]
+
+        dig_com_field = arcpy.Parameter(
+            displayName="DIG_COM Source Field (optional)",
+            name="dig_com_field",
+            datatype="Field",
+            parameterType="Optional",
+            direction="Input"
+        ); dig_com_field.parameterDependencies = ["in_fc"]
+
+        descriptor_field = arcpy.Parameter(
+            displayName="DESCRIPTOR Source Field (optional, 250 chars)",
+            name="descriptor_field",
+            datatype="Field",
+            parameterType="Optional",
+            direction="Input"
+        ); descriptor_field.parameterDependencies = ["in_fc"]
+
+        # REQUIRED UNIQUEID field
+        uniqueid_field = arcpy.Parameter(
+            displayName="UNIQUEID Source Field (REQUIRED)",
+            name="uniqueid_field",
+            datatype="Field",
+            parameterType="Required",
+            direction="Input"
+        ); uniqueid_field.parameterDependencies = ["in_fc"]
+
+        # REQUIRED DISTANCE FIELD
+        distance_field = arcpy.Parameter(
+            displayName="DISTANCE Source Field (REQUIRED)",
+            name="distance_field",
+            datatype="Field",
+            parameterType="Required",
+            direction="Input"
+        ); distance_field.parameterDependencies = ["in_fc"]
+
+        # OPTIONAL REP_ACC and REP_COM
+        repacc_field = arcpy.Parameter(
+            displayName="REP_ACC Source Field (optional, 30 chars)",
+            name="repacc_field",
+            datatype="Field",
+            parameterType="Optional",
+            direction="Input"
+        ); repacc_field.parameterDependencies = ["in_fc"]
+
+        repcom_field = arcpy.Parameter(
+            displayName="REP_COM Source Field (optional, 4000 chars)",
+            name="repcom_field",
+            datatype="Field",
+            parameterType="Optional",
+            direction="Input"
+        ); repcom_field.parameterDependencies = ["in_fc"]
+
+        # Required biological fields
+        sname_field = arcpy.Parameter(
+            displayName="SNAME Source Field (required)",
+            name="sname_field",
+            datatype="Field",
+            parameterType="Required",
+            direction="Input"
+        ); sname_field.parameterDependencies = ["in_fc"]
+
+        est_id_field = arcpy.Parameter(
+            displayName="EST_ID Source Field (required)",
+            name="est_id_field",
+            datatype="Field",
+            parameterType="Required",
+            direction="Input"
+        ); est_id_field.parameterDependencies = ["in_fc"]
+
+        # Optional visit table fields
+        v_by_field = arcpy.Parameter(
+            displayName="V_BY Source Field (optional)",
+            name="v_by_field",
+            datatype="Field",
+            parameterType="Optional",
+            direction="Input"
+        ); v_by_field.parameterDependencies = ["in_fc"]
+
+        v_date_field = arcpy.Parameter(
+            displayName="V_DATE Source Field (optional)",
+            name="v_date_field",
+            datatype="Field",
+            parameterType="Optional",
+            direction="Input"
+        ); v_date_field.parameterDependencies = ["in_fc"]
+
+        v_note_field = arcpy.Parameter(
+            displayName="V_NOTE Source Field (optional)",
+            name="v_note_field",
+            datatype="Field",
+            parameterType="Optional",
+            direction="Input"
+        ); v_note_field.parameterDependencies = ["in_fc"]
+
+        # References
+        ref_id_field = arcpy.Parameter(
+            displayName="REF_ID Source Field (optional)",
+            name="ref_id_field",
+            datatype="Field",
+            parameterType="Optional",
+            direction="Input"
+        ); ref_id_field.parameterDependencies = ["in_fc"]
+
+        output_fc = arcpy.Parameter(
+            displayName="Output Feature Class",
+            name="output_fc",
+            datatype="Feature Class",
+            parameterType="Derived",
+            direction="Output"
+        )
+
+        return [
+            in_fc, map_by_input, map_com_field, dig_com_field, descriptor_field,
+            uniqueid_field, distance_field, repacc_field, repcom_field,
+            sname_field, est_id_field,
+            v_by_field, v_date_field, v_note_field,
+            ref_id_field, output_fc
+        ]
+
+    def execute(self, parameters, messages):
+
+        in_fc = parameters[0].valueAsText
+        map_by_input = parameters[1].valueAsText.strip()
+        map_com_field = parameters[2].valueAsText
+        dig_com_field = parameters[3].valueAsText
+        descriptor_field = parameters[4].valueAsText
+        uniqueid_field = parameters[5].valueAsText
+        distance_field = parameters[6].valueAsText
+        repacc_field = parameters[7].valueAsText
+        repcom_field = parameters[8].valueAsText
+        sname_field = parameters[9].valueAsText
+        est_id_field = parameters[10].valueAsText
+        v_by_field = parameters[11].valueAsText
+        v_date_field = parameters[12].valueAsText
+        v_note_field = parameters[13].valueAsText
+        ref_id_field = parameters[14].valueAsText
+        output_fc = parameters[15]
+
+        # Validate MAP_BY
+        if len(map_by_input) > 20:
+            arcpy.AddWarning("MAP_BY truncated to 20 characters.")
+            map_by_input = map_by_input[:20]
+
+        desc = arcpy.Describe(in_fc)
+        in_workspace = desc.path
+        in_sr = desc.spatialReference
+
+        out_fc_path = os.path.join(in_workspace, "sf_point")
+        for t in [out_fc_path,
+                  os.path.join(in_workspace, "tbl_sf_visits"),
+                  os.path.join(in_workspace, "tbl_sf_references")]:
+            if arcpy.Exists(t):
+                arcpy.Delete_management(t)
+
+        arcpy.CreateFeatureclass_management(
+            in_workspace, "sf_point", "POINT",
+            has_z="DISABLED", has_m="DISABLED",
+            spatial_reference=in_sr
+        )
+
+        # Field creation
+        def add_text(n, l): arcpy.AddField_management(out_fc_path, n, "TEXT", field_length=l)
+        def add_double(n): arcpy.AddField_management(out_fc_path, n, "DOUBLE")
+
+        add_double("UNIQUEID")
+        add_text("CONC_FEAT_", 10)
+        add_text("LOC_UNCERT", 30)
+        add_double("DISTANCE")
+        add_text("DIST_UNIT", 20)
+        add_text("MAP_BY", 20)
+        add_text("MAP_DATE", 10)
+        add_text("MAP_COM", 1000)
+        add_text("SNAME", 100)
+        add_double("EST_ID")
+
+        add_text("QC_BY", 20)
+        add_text("QC_STATUS", 60)
+        add_text("QC_COM", 1000)
+        add_text("DESCRIPTOR", 250)
+        add_text("LOCATOR", 250)
+        add_text("LOC_USE", 40)
+        add_text("UH_EX", 1)
+        add_text("DIG_BASE", 60)
+        add_text("DIG_COM", 1000)
+        add_text("REP_ACC", 30)
+        add_text("REP_COM", 4000)
+        add_double("OBS_AR_LEN")
+        add_text("OBS_AL_UNI", 20)
+        add_double("EO_ID")
+        add_text("EO_NEW", 25)
+        add_text("EODISTCOM", 1000)
+        add_text("EO_NEW_COM", 4000)
+        add_text("EO_MAP_BY", 20)
+        add_text("EO_MAP_DT", 30)
+        add_text("EO_QC_BY", 20)
+        add_text("EO_QC_ST", 60)
+        add_text("EO_QC_COM", 1000)
+
+        # Resolve fieldnames
+        lookup = {f.name.lower(): f.name for f in arcpy.ListFields(in_fc)}
+        def r(f): return lookup.get(f.lower(), f)
+
+        uniqueid_f = r(uniqueid_field)
+        distance_f = r(distance_field)
+        sname_f = r(sname_field)
+        estid_f = r(est_id_field)
+        mapcom_f = r(map_com_field) if map_com_field else None
+        digcom_f = r(dig_com_field) if dig_com_field else None
+        desc_f = r(descriptor_field) if descriptor_field else None
+        repacc_f = r(repacc_field) if repacc_field else None
+        repcom_f = r(repcom_field) if repcom_field else None
+
+        # Build cursor input fields
+        in_fields = ["OID@", "SHAPE@XY", uniqueid_f, distance_f, sname_f, estid_f]
+        if mapcom_f: in_fields.append(mapcom_f)
+        if digcom_f: in_fields.append(digcom_f)
+        if desc_f: in_fields.append(desc_f)
+        if repacc_f: in_fields.append(repacc_f)
+        if repcom_f: in_fields.append(repcom_f)
+
+        out_fields = [
+            "SHAPE@", "UNIQUEID", "CONC_FEAT_", "LOC_UNCERT", "DISTANCE",
+            "DIST_UNIT", "MAP_BY", "MAP_DATE", "MAP_COM", "SNAME", "EST_ID",
+            "QC_BY", "QC_STATUS", "QC_COM", "DESCRIPTOR", "LOCATOR", "LOC_USE",
+            "UH_EX", "DIG_BASE", "DIG_COM", "REP_ACC", "REP_COM",
+            "OBS_AR_LEN", "OBS_AL_UNI", "EO_ID", "EO_NEW", "EODISTCOM",
+            "EO_NEW_COM", "EO_MAP_BY", "EO_MAP_DT", "EO_QC_BY", "EO_QC_ST", "EO_QC_COM"
+        ]
+
+        run_date = date.today().strftime("%Y-%m-%d")
+
+        with arcpy.da.SearchCursor(in_fc, in_fields) as s, \
+             arcpy.da.InsertCursor(out_fc_path, out_fields) as i:
+
+            for row in s:
+                idx = 0
+                oid = row[idx]; idx += 1
+                xy = row[idx]; idx += 1
+
+                uniqueid_val = float(row[idx]); idx += 1
+                distance_val = float(row[idx]); idx += 1
+
+                sname_val = row[idx]; idx += 1
+                est_raw = row[idx]; idx += 1
+                est_val = float(est_raw) if est_raw not in (None, "") else None
+
+                mapcom_val = None
+                digcom_val = None
+                desc_val = None
+                repacc_val = None
+                repcom_val = None
+
+                if mapcom_f:
+                    mapcom_val = row[idx]; idx += 1
+                    if mapcom_val: mapcom_val = str(mapcom_val)[:1000]
+
+                if digcom_f:
+                    digcom_val = row[idx]; idx += 1
+                    if digcom_val: digcom_val = str(digcom_val)[:1000]
+
+                if desc_f:
+                    desc_val = row[idx]; idx += 1
+                    if desc_val: desc_val = str(desc_val)[:250]
+
+                if repacc_f:
+                    repacc_val = row[idx]; idx += 1
+                    if repacc_val: repacc_val = str(repacc_val)[:30]
+
+                if repcom_f:
+                    repcom_val = row[idx]; idx += 1
+                    if repcom_val: repcom_val = str(repcom_val)[:4000]
+
+                # SAFETY: Prevent DIG_COM → DESCRIPTOR overwrite
+                if desc_val == digcom_val:
+                    pass
+
+                geom = arcpy.PointGeometry(arcpy.Point(*xy), in_sr)
+
+                i.insertRow([
+                    geom,
+                    uniqueid_val,
+                    "Point",
+                    "Estimated",
+                    distance_val,
+                    "Meters",
+                    map_by_input,
+                    run_date,
+                    mapcom_val,
+                    str(sname_val)[:100] if sname_val else None,
+                    est_val,
+                    None, None, None,
+                    desc_val,
+                    None, None,
+                    "N",
+                    "GPS:>10m",
+                    digcom_val,
+                    repacc_val,
+                    repcom_val,
+                    None, None,
+                    None, None, None,
+                    None, None, None, None, None, None
+                ])
+
+        # Visits table
+        visits = os.path.join(in_workspace, "tbl_sf_visits")
+        arcpy.CreateTable_management(in_workspace, "tbl_sf_visits")
+        arcpy.AddField_management(visits, "V_BY", "TEXT", 250)
+        arcpy.AddField_management(visits, "V_DATE", "TEXT", 50)
+        arcpy.AddField_management(visits, "V_NOTE", "TEXT", 2000)
+        arcpy.AddField_management(visits, "SF_TYPE", "TEXT", field_length=10)
+        arcpy.AddField_management(visits, "SF_UNIQUEID", "LONG")
+
+        vis_input = ["OID@",uniqueid_f]
+        vis_map = []
+        if v_by_field: vis_input.append(r(v_by_field)); vis_map.append("V_BY")
+        if v_date_field: vis_input.append(r(v_date_field)); vis_map.append("V_DATE")
+        if v_note_field: vis_input.append(r(v_note_field)); vis_map.append("V_NOTE")
+
+        with arcpy.da.SearchCursor(in_fc, vis_input) as sv, \
+             arcpy.da.InsertCursor(visits, ["V_BY", "V_DATE", "V_NOTE", "SF_TYPE", "SF_UNIQUEID"]) as iv:
+
+            for row in sv:
+                oid = row[0]
+                uniqueid_val = row[1]
+                vals = [None, None, None]
+                for j, name in enumerate(vis_map):
+                    val = row[j+2]
+                    if val:
+                        if name == "V_BY": val = str(val)[:250]
+                        elif name == "V_DATE": val = str(val)[:10]
+                        else: val = str(val)[:2000]
+                    vals[j] = val
+
+                iv.insertRow([vals[0], vals[1], vals[2], "point", int(uniqueid_val)])
+
+        # References
+        refs = os.path.join(in_workspace, "tbl_sf_references")
+        arcpy.CreateTable_management(in_workspace, "tbl_sf_references")
+        arcpy.AddField_management(refs, "REF_ID", "DOUBLE")
+        arcpy.AddField_management(refs, "REF_PRIM", "TEXT", 1)
+        arcpy.AddField_management(refs, "SF_TYPE", "TEXT", 10)
+        arcpy.AddField_management(refs, "SF_UNIQUEID", "LONG")
+
+        ref_input = ["OID@",uniqueid_f]
+        if ref_id_field:
+            ref_input.append(r(ref_id_field))
+
+        with arcpy.da.SearchCursor(in_fc, ref_input) as sr, \
+             arcpy.da.InsertCursor(refs, ["REF_ID", "REF_PRIM", "SF_TYPE", "SF_UNIQUEID"]) as ir:
+
+            for row in sr:
+                oid = row[0]
+                uniqueid_val = row[1]
+                refval = None
+                raw = row[2] if len(row) > 2 else None
+                if raw not in (None, ""):
+                    try:
+                        refval = float(raw)
+                    except:
+                        refval = None
+
+                ir.insertRow([refval, "N", "point", int(uniqueid_val)])
+
+        parameters[15].value = out_fc_path
+        arcpy.AddMessage("sf_point and related tables created.")
+        
+    def postExecute(self, parameters):
+        return
