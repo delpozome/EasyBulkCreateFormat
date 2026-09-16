@@ -27,7 +27,7 @@ Notice: the tool will reformat dates to yyyy-MM-dd.
 
  Make sure to QC the output.  
 
-Best Practices 
+# Best Practices 
 
 When importing data from an excel file, transform it to .csv first and only open it in pro. This is because when pro imports excel files, it truncates text. 
 
